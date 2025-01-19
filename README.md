@@ -6,7 +6,6 @@
 
 ## Project Overview:
 
-```
 1. **IAM User Setup:** Create an IAM user on AWS with the necessary permissions to facilitate deployment and management activities.
 
 2. **Infrastructure as Code (IaC):** Use Terraform and AWS CLI to set up the Jenkins server (EC2 instance) on AWS.
@@ -34,7 +33,6 @@
 13. **Data Persistence:** Implement persistent volume and persistent volume claims for database pods to ensure data persistence.
 
 14. **Monitoring:** Monitoring the EKS cluster’s performance using Grafana.
-```
 
 ## Prerequisites:
 
