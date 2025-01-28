@@ -1,316 +1,246 @@
 # MERN Stack Three-tier Application End-to-end DevsecOps Implementation.
 
-**This project demonstrates an end-to-end DevOps implementation for deploying and managing a MERN stack three-tier application. The pipeline incorporates infrastructure setup, CI/CD processes, application deployment, and monitoring on AWS EKS (Elastic Kubernetes Service).**
+*This project demonstrates an end-to-end DevOps implementation for deploying and managing a MERN stack three-tier application on AWS infrastructure.*
+
+![Index 1 Banner](assets/index-1.jpg)
+
+![Index 2 Banner](assets/index-2.jpg)
+
+## Project Overview
+
+### 1. Infrastructure Setup:
+
+- Use Terraform to automate:
+
+    - Private VPC.
+    - EKS Cluster with two worker nodes.
+    - Bastion (Jump) Server for secure EKS management.
+
+- Jenkins is manually installed on an EC2 instance to trigger Terraform scripts.
+
+### 2. CI/CD Pipeline:
+
+- Jenkins CI includes:
+
+    - Code checkout from GitHub.
+    - Code quality analysis using SonarQube.
+    - Dependency and file scanning.
+    - Docker image creation and pushing to ECR.
+    - Container image scanning with Trivy.
+    - Kubernetes manifest updates.
+
+- Argo CD handles continuous delivery to deploy the updated application to the EKS cluster.
+
+### 3. Ingress Controller, Custom Domain & Monitoring:
+
+- Configure AWS Application Load Balancer (ALB) for the EKS cluster.
+
+- Custom DNS mapping and integration with AWS Route 53.
+
+- Metrics collection using Prometheus.
+
+- Visualization with Grafana.
 
 ![Three-Tier Banner](assets/three-tier-workflow.gif)
 
-## Project Overview:
+## Step 1. Create a Jenkins server on Ec2
 
-1. **IAM User Setup:** Create an IAM user on AWS with the necessary permissions to facilitate deployment and management activities.
+- Create a security group allowing only ports `8080` (jenkins) and `9090` (sonarqube).
 
-2. **Infrastructure as Code (IaC):** Use Terraform and AWS CLI to set up the Jenkins server (EC2 instance) on AWS.
+- Launch an instance `Jenkins Server` with the following details:
 
-3. **Jenkins Server Configuration:** Install and configure essential tools on the Jenkins server, including Jenkins itself, Docker, Sonarqube, Terraform, Kubectl, AWS CLI, and Trivy.
+    - Ubuntu image
+    - t2.2xlarger
+    - Proceed without a key-pair
+    - Default Vpc
+    - Select the previously created security group
+    - Storage: 30GB
+    - Advanced: 
+    - Select/Create an IAM role with `EC2` -> `Administrative-Access`
+    - User Data: Enter the script `Jenkins-Server-TF/tools-install.sh`
 
-4. **EKS Cluster Deployment:** Utilize eksctl commands to create an Amazon EKS cluster, a managed Kubernetes service on AWS.
+- Connect to the instance using `Session Manager`; 
 
-5. **Load Balancer Configuration:** Configure AWS Application Load Balancer (ALB) for the EKS cluster.
+    ```bash
+    # Verify
 
-6. **Amazon ECR Repositories:** Create private repositories for both frontend and backend Docker images on Amazon Elastic Container Registry (ECR).
-
-7. **ArgoCD Installation:** Install and set up ArgoCD for continuous delivery and GitOps.
-
-8. **Sonarqube Integration:** Integrate Sonarqube for code quality analysis in the DevOps pipeline.
-
-9. **Jenkins Pipelines:** Create Jenkins pipelines for deploying backend and frontend code to the EKS cluster.
-
-10. **Monitoring Setup:** Implement monitoring for the EKS cluster using Helm, Prometheus, and Grafana.
-
-11. **ArgoCD Application Deployment:** Use ArgoCD to deploy the Three-Tier application, including database, backend, frontend, and ingress components.
-
-12. **DNS Configuration:** Configure DNS settings to make the application accessible via custom subdomains.
-
-13. **Data Persistence:** Implement persistent volume and persistent volume claims for database pods to ensure data persistence.
-
-14. **Monitoring:** Monitoring the EKS cluster’s performance using Grafana.
-
-## Prerequisites:
-
-- An AWS account with the necessary permissions to create resources.
-
-- Terraform and AWS CLI installed on your local machine.
-
-## Step 1: Create an IAM user and generate the AWS Access key
-
-Create a new IAM User on AWS and give to it the `AdministratorAccess` for testing purposes (not recommended for your Organization's Projects)
-
-- Go to the `AWS IAM Service` -> `Users` -> `Create user`.
-
-    - Provide the name to your user and click on Next.
-    
-    - Select the Attach policies directly option and search for `AdministratorAccess` then select it.
-
-- Now, Select your created user then click on `Security credentials` -> `Create access key`.
-
-    - Select the Command Line Interface (CLI) then select the checkmark for the confirmation and click on Next.
-
-    - Provide the Description and click on the Create access key.
-
-## Step 2: Install Terraform & AWS CLI
-
-Install & Configure Terraform and AWS CLI on your local machine to create Jenkins Server on AWS Cloud
-
-### Terraform Installation
-
-```bash
-wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg - dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-
-sudo apt update
-
-sudo apt install terraform -y
-```
-
-### AWSCLI Installation
-
-```bash
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-sudo apt install unzip -y
-unzip awscliv2.zip
-sudo ./aws/install
-```
-
-### Configure Terraform
-
-- Edit the file /etc/environment using the `sudo vim /etc/environment` command, add below lines and add your keys.
-
-    ```
-    export AWS_ACCESS_KEY_ID = <YOUR_AWS_ACCESS_KEY_ID>
-    export AWS_SECRET_ACCESS_KEY = <YOUR_AWS_SECRET_ACCESS_KEY>
-    export AWS_DEFAULT_REGION = <YOUR_AWS_DEFAULT_REGION>
+    sudo su ubuntu
+    cd
+    sudo htop
+    java --version
+    jenkins --version
+    docker --version
+    docker ps
+    terraform --version
+    whereis terraform   # Output: /usr/bin/terraform
+    trivy --version
+    kubectl version --client
+    aws --version
+    eksctl version
+    helm version
     ```
 
-- After doing the changes, restart your machine to reflect the changes of your environment variables.
+- Access Jenkins UI at `<jenkins-server-public-ip>:8000`
 
-### Configure AWS CLI
+    - Get the password using `systemctl status jenkins.service`
+    - Install suggested plugins
+    - Create First Admin User
 
-- Run the `aws configure` command, and add your keys
+## Step 2. Create Infrastructure on Aws using Terraform
 
-## Step 3: Deploy the Jenkins Server(EC2) using Terraform
+- Install necessary plugins on Jenkins server at `Dashboard` -> `Manage Jenkins` -> `Plugins` -> `Available Plugins`.
 
-```bash
-# Clone the repository
-git clone https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git
-cd Jenkins-Server-TF/
+    - `Aws Credentils`
+    - `Pipeline: Aws Steps`
+    - `Terraform`
+    - `Pipeline: Stage View`
 
-# Do some modifications to the `backend.tf` file such as changing the bucket name and dynamodb table(make sure you have created both manually on AWS Cloud).
+- Store Aws credentials at `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `global` -> `Add Credentials`.
 
-# In `variables.tfvars`, you have to replace the key-name `my_key` as you have some other name for your Pem file.
+    - Kind: AWS Credentials
+    - Scope: Global (Jenkins, node, items, child items, etc) 
+    - ID: aws-creds 
+    - Description: aws-creds
 
-# Initialize the backend
-terraform init
-terraform validate
-terraform plan -var-file=variables.tfvars
-terraform apply -var-file=variables.tfvars --auto-approve
-```
+- Configure Terraform at `Dashboard` -> `Manage Jenkins` -> `Tools` -> `Terraform Installations` -> `Add Terraform` 
 
-## Step 4: Configure the Jenkins
+    - Name: terraform
+    - Install directory: /usr/bin/terraform
 
-```bash
-# Access the Jenkins server.
-ssh -i `my_key.pem` ubuntu@<instance-ip>
+- Create a pipeline at `Dashboard` -> `Create a Job` -> `Pipeline` -> `Pipeline Script`.
 
-# Validate the installed services
-jenkins --version
-docker --version
-docker ps
-terraform --version
-kubectl version
-aws --version
-trivy --version
-eksctl --version
+    - Get the script from `https://github.com/aqeeladil/https://github.com/aqeeladil/mern-end-to-end-devops-implementation/blob/main/Infrastructure/Jenkinsfile`.
+    - Click on `Build now`.
+    - Click on `Build with Parameters` -> `Apply` -> `Build`.
+    - Now, after few minutes, EKS cluster `dev-medium-eks-cluster` will be created in the configured VPC.
 
-# Access Jenkins UI at <jenkins-server-public-ip>:8000
-
-# Install suggested plugins
-# Continue as admin
-```
-
-## Step 5: Deploy the EKS Cluster
-
-1. Configure AWS CLI on Jenkins Server using `aws configure`.
-
-2. Install plugins on Jenkins UI through `Manage Jenkins` > `Plugins` > `Available plugins`.
-
-    - Install the following two plugins:
-
-        - `AWS Credentials`
-
-        - `Pipeline: AWS Steps`
-
-    - Once, both the plugins are installed, restart your Jenkins service by checking the Restart Jenkins option.
-
-    - Login to your Jenkins Server Again
-
-3. Set AWS credentials on Jenkins
-
-    - `Manage Plugins` > `Credentials` > `global`.
-
-        - Kind: AWS Credentials
-        - Scope: Global (Jenkins, node, items, child items, etc) 
-        - ID: aws-key 
-        - Description: aws-key
-
-4. Add GitHub credentials if repository is Private.
-
-    - Add the username and personal access token of your GitHub account
-
-### Create an eks cluster
+## Step 3. Configure `Jenkins Server` for Eks Cluster 
 
 ```bash
-eksctl create cluster 
-    --name Three-Tier-K8s-EKS-Cluster 
-    --region us-east-1 
-    --node-type t2.medium 
-    --nodes-min 2 
-    --nodes-max 2
-
-aws eks update-kubeconfig --region us-east-1 --name Three-Tier-K8s-EKS-Cluster
+aws configure
+aws eks update-kubeconfig --name dev-medium-eks-cluster --region us-east-1 
 
 # Verify
-kubectl get nodes
+kebectl get nodes   # here you will not be able to access the cluster because its in a private subnet inside a different Vpc.
 ```
 
-## Step 6: Configure the Load Balancer on EKS because our application will have an ingress controller.
+## Step 4. Create a Jump Server in the same VPC as Eks Cluster.
 
-```bash
-# Download the policy
+- As Eks cluster will be created in the private subnet, so we need a jump server in the same vpc to access it from the outside (`Jenkins Server`).
 
-curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.5.4/docs/install/iam_policy.json
+- Launch an EC2 Instance `Jump Server` with the following details:
 
-# Create the IAM policy
+    - Ubuntu image
+    - t2.medium
+    - Proceed without a key-pair
+    - Vpc: `dev-medium-vpc`.
+    - Subnet: `dev-medium-subnet-public-1`
+    - Create a default security group
+    - Storage: 30GB
+    - Advanced: 
+    - Select/Create an IAM role with `EC2` -> `Administrative-Access`
+    - User Data: Enter the script `Infrastructure/jump-tools.sh`
 
-aws iam create-policy 
-    --policy-name AWSLoadBalancerControllerIAMPolicy 
-    --policy-document file://iam_policy.json
+- Connect to the instance using `Session Manager`; 
 
-# Create OIDC Provider
+    ```bash
+    # Verify
 
-eksctl utils associate-iam-oidc-provider 
-    --region=us-east-1 
-    --cluster=Three-Tier-K8s-EKS-Cluster 
-    --approve
+    sudo su ubuntu
+    cd
+    sudo htop
+    kubectl version --client
+    aws --version
+    eksctl version
+    helm version
+    ```
 
-# Create a Service Account
+- Access the Eks Cluster
 
-eksctl create iamserviceaccount 
-    --cluster=Three-Tier-K8s-EKS-Cluster 
-    --namespace=kube-system 
-    --name=aws-load-balancer-controller 
-    --role-name AmazonEKSLoadBalancerControllerRole --attach-policy-arn=arn:aws:iam::<your_account_id>:policy/AWSLoadBalancerControllerIAMPolicy 
-    --region=us-east-1
-    --approve 
-```
-```bash
-# Deploy the AWS Load Balancer Controller
+    ```bash
+    aws configure
+    aws eks update-kubeconfig --name dev-medium-eks-cluster --region us-east-1 
 
-sudo snap install helm --classic
-helm repo add eks https://aws.github.io/eks-charts
-helm repo update eks
+    # Verify 
+    kubectl get nodes
+    kubectl get all
+    ```
 
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller 
-    -n kube-system 
-    --set clusterName=my-cluster 
-    --set serviceAccount.create=false 
-    --set serviceAccount.name=aws-load-balancer-controller
+- Create a Service Account using the already created IAM Policy and OIDC Provider.
 
-# Verify
-kubectl get deployment -n kube-system aws-load-balancer-controller
+    ```bash
+    eksctl create iamserviceaccount \
+        --cluster=dev-medium-eks-cluster \
+        --namespace=kube-system \
+        --name=aws-load-balancer-controller \
+        --role-name AmazonEKSLoadBalancerControllerRole \  --attach-policy-arn=arn:aws:iam::<your_account_id>:policy/AWSLoadBalancerControllerIAMPolicy \
+        --region=us-east-1 \
+        --approve \
+        --override-existing-serviceaccounts
 
-# If the pods are getting Error or CrashLoopBackOff, use the below command
+    kubectl get sa -n kube-system      # Output: aws-load-balancer-controller
+    ```
 
-helm upgrade -i aws-load-balancer-controller eks/aws-load-balancer-controller \
-  --set clusterName=my-cluster \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller \
-  --set region=us-east-1 
-  --set vpcId=<vpc#> 
-  -n kube-system
-```
+- Deploy the AWS Load Balancer Controller using Helm
 
-# Step 7: Create Amazon ECR Private Repositories for both Tiers (Frontend & Backend)
+    ```bash
+    helm repo add eks https://aws.github.io/eks-charts
+    helm repo update eks
+    helm repo list
 
-- Using the Aws Management Console, create two private repositories on Aws ECR.
+    helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        -n kube-system \
+        --set clusterName=dev-medium-eks-cluster \
+        --set serviceAccount.create=false \
+        --set serviceAccount.name=aws-load-balancer-controller \
 
-- Configure ECR locally on Jenkins Server because we have to upload our images to Amazon ECR.
+    # Verify
+    kubectl get deployment -n kube-system aws-load-balancer-controller
+    ```
 
-## Step 8: Install & Configure ArgoCD
+- Install & Configure ArgoCD using Helm
 
-```bash
-kubectl create namespace three-tier
+    ```bash
+    kubectl create namespace argocd
+    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-# As you know, Our two ECR repositories are private. So, when we try to push images to the ECR Repos it will give us the error `Imagepullerror`. To get rid of this error, we will create a secret for our ECR Repo by the below command and then, we will add this secret to the deployment file.
+    # Verify
+    kubectl get pods -n argocd
 
-# Note: The Secrets are coming from the `.docker/config.json` file which is created while login the ECR in the earlier steps
+    # Expose the argoCD server as LoadBalancer
+    kubectl get svc -n argocd    # Output: argocd-server
+    # kubectl edit svc argocd-server -n argocd
+    kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
 
-kubectl create secret generic ecr-registry-secret \
-  --from-file=.dockerconfigjson=${HOME}/.docker/config.json \
-  --type=kubernetes.io/dockerconfigjson --namespace three-tier
+    # You can validate visiting the `loadbalancer` service on the AWS Console.
+    # To access the argoCD, copy the LoadBalancer DNS and hit on your favorite browser.
 
-kubectl get secrets -n three-tier
+    # Username: admin
+    # Get the password
+    kubectl get secrets -n argocd
+    kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+    ```
 
-# Install argoCD.
+## Step 5. Configure Sonarqube on the `Jenkins Server`
 
-kubectl create namespace argocd
-
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.4.7/manifests/install.yaml
-
-# Verify
-
-kubectl get pods -n argocd
-
-# Expose the argoCD server as LoadBalancer
-
-kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
-
-# You can validate whether the Load Balancer is created or not by going to the AWS Console
-
-# To access the argoCD, copy the LoadBalancer DNS and hit on your favorite browser.
-
-# Get the password for argoCD server to perform the deployment.
-
-sudo apt install jq -y
-
-export ARGOCD_SERVER='kubectl get svc argocd-server -n argocd -o json | jq - raw-output '.status.loadBalancer.ingress[0].hostname''
-
-export ARGO_PWD='kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d'
-
-echo $ARGO_PWD
-
-# Enter the username and password in argoCD and click on SIGN IN.
-```
-
-## Step 9: Configure Sonarqube for DevOps Pipeline
-
-1. Access Sonarqube at `http://<jenkins-server-public-ip>:9000/`
+- Access Sonarqube at `http://<jenkins-server-public-ip>:9000/`
 
     - The username and password will be admin
 
     - Update the password
 
-2. `Administration` -> `Security` -> `Users` -> `Update tokens` -> `Generate`
+- `Administration` -> `Security` -> `Users` -> `Update tokens` -> `Generate`
 
-    - Copy the token & keep it somewhere safe.
+    - Copy the token `three-tier` & keep it somewhere safe.
 
-3. Configure webhooks for quality checks.
+- Configure webhooks for quality checks.
 
     - `Administration` -> `Configuration` -> `Webhooks` -> `Create`
 
         - Name: jenkins
         - URL: `http://<jenkins-server-public-ip>:8080/sonarqube-webhook/`
 
-4. Create a Project for frontend code.
+- Create a Project for Frontend code.
 
     - `http://<jenkins-server-public-ip>:9000/projects/create`
 
@@ -320,11 +250,11 @@ echo $ARGO_PWD
         - Project key: three-tier-frontend
         - Branch: main
 
-    - `Setup` -> `Locally` -> `Use existing token` -> `Continue` -> `Other and Linux as OS`.
+    - `Setup` -> `Locally` -> `Use existing token` -> `Continue` -> `Other` -> `Linux`.
 
     - Copy the provided command and use it in the Jenkins Frontend Pipeline where Code Quality Analysis will be performed.
 
-5. Create a Project for backend code.
+- Create a Project for Backend code.
 
     - `http://<jenkins-server-public-ip>:9000/projects/create`
 
@@ -334,11 +264,11 @@ echo $ARGO_PWD
         - Project key: three-tier-backend
         - Branch: main
 
-    - `Setup` -> `Locally` -> `Use existing token` -> `Continue` -> `Other and Linux as OS`.
+    - `Setup` -> `Locally` -> `Use existing token` -> `Continue` -> `Other` -> `Linux`.
 
     - Copy the provided command and use it in the Jenkins Backend Pipeline where Code Quality Analysis will be performed.
 
-6. Store the sonar credentials in Jenkins.
+- Store the Sonar Credentials in Jenkins.
 
     - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
 
@@ -347,16 +277,11 @@ echo $ARGO_PWD
         - ID: sonar-token
         - Description: sonar-token
 
-7. Store the GitHub Personal access token to push the deployment file which will be modified in the pipeline itself for the ECR image.
+## Step 6. Create & Configure ECR Repositories.
 
-    - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
+- Create two `Private` repositories `backend` and `frontend` on AWS ECR.
 
-        - Kind: Secret text
-        - Scope: Global (Jenkins, node, items, child items, etc) 
-        - ID: github
-        - Description: github
-
-8. Add Aws Account ID in the Jenkins credentials because of the ECR repo URI.
+- Add AWS Account ID in the Jenkins credentials because of the ECR repo URI.
 
     - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
 
@@ -365,109 +290,206 @@ echo $ARGO_PWD
         - ID: ACCOUNT_ID
         - Description: ACCOUNT_ID
 
-9. Provide the ECR image name for frontend which is `frontend` only.
+- Provide the ECR image name for frontend which is `frontend` only.
 
     - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
 
         - Kind: Secret text
         - Scope: Global (Jenkins, node, items, child items, etc) 
+        - Secret: frontend
         - ID: ECR_REPO1
         - Description: ECR_REPO1
 
-10. Provide our ECR image name for the backend which is `backend` only.
+- Provide the ECR image name for the backend which is `backend` only.
 
     - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
 
         - Kind: Secret text
-        - Scope: Global (Jenkins, node, items, child items, etc) 
+        - Scope: Global (Jenkins, node, items, child items, etc)
+        - Secret: backend
         - ID: ECR_REPO2
         - Description: ECR_REPO2
 
-## Step 10: Install the required plugins and configure the plugins to deploy Three-Tier Application
+- Store the GitHub Personal access token in Jenkins credentials to push the deployment file which will be modified in the pipeline itself for the ECR image.
 
-`Dashboard` -> `Manage Jenkins` -> `Plugins` -> `Available Plugins`
-```bash
-Docker
-Docker Commons
-Docker Pipeline
-Docker API
-docker-build-step
-Eclipse Temurin installer
-NodeJS
-OWASP Dependency-Check
-SonarQube Scanner
-```
+    - `Dashboard` -> `Manage Jenkins` -> `Credentials` -> `Global`.   
 
-1. Configure the installed plugins:** 
+        - Kind: Secret text
+        - Scope: Global (Jenkins, node, items, child items, etc)
+        - Username: aqeeladil
+        - ID: github
+        - Description: github
 
-    - `Dashboard` -> `Manage Jenkins` -> ``Tools`
+## Step 7: Install & Configure the required Plugins
 
-        - Search for jdk and provide the configuration details.
+- `Dashboard` -> `Manage Jenkins` -> `Plugins` -> `Available Plugins`
 
-        - Search for the sonarqube scanner and provide the configuration details.
+    ```bash
+    Docker
+    Docker Commons
+    Docker Pipeline
+    Docker API
+    docker-build-step
+    NodeJS
+    OWASP Dependency-Check
+    SonarQube Scanner
+    ```
 
-        - Search for node and provide the configuration details.
+- Configure the installed plugins: `Dashboard` -> `Manage Jenkins` -> `Tools`
 
-        - Search for Dependency-Check and provide the configuration details.
-
-        - Search for docker and provide the configuration details.
-
-2. Set the path for Sonarqube in Jenkins.
-
-    - `Dashboard` -> `Manage Jenkins` -> `System` -> `SonarQube installations`
-
-        - Name: sonar-server
-        - Server URL: `http://<jenkins-server-public-ip>:9000/`
-        - Server Auth Token: sonar-token
-
-3. Create Jenkins Pipeline to deploy the Backend Code.
-
-    - `Jenkins Dashboard` -> `New Item` -> `Pipeline`   
+    - Search for the `Sonarqube Scanner Installations` and provide the configuration details.
+        - Name: sonar-scanner
+        - Install automatically: from Maven central
         
-        - Name: Three-Tier-Backend-Application
+    - Search for `NodeJS Installations` and provide the configuration details.
+        - Name: nodejs
+        - Install automatically: from nodejs.org
 
-        - Copy paste the code from `Jenkins-Pipeline-Code/Jenkinsfile-Backend`.
+    - Search for `Dependency-Check Installations` and provide the configuration details.
+        - Name: DP-check
+        - Install automatically: from github.com
 
-        - Click on the `Build Now`.
+    - Search for `Docker Installations` and provide the configuration details.
+        - Name: docker
+        - Install automatically: from docker.com
 
-4. Create Jenkins Pipeline to deploy the Frontend Code.
+- Set the path for Sonarqube in Jenkins: `Dashboard` -> `Manage Jenkins` -> `System` -> `SonarQube installations`
 
-    - `Jenkins Dashboard` -> `New Item` -> `Pipeline`   
+    - Name: sonar-server
+    - Server URL: `http://<jenkins-server-public-ip>:9000/`
+    - Server Auth Token: `sonar-token`
+
+- Create Jenkins Pipeline to deploy the Backend Code: `Jenkins Dashboard` -> `New Item` -> `Pipeline`   
         
-        - Name: Three-Tier-Frontend -Application
+    - Name: Three-Tier-Backend-Application
+    - Copy paste the code from `Jenkins-Pipeline-Code/Jenkinsfile-Backend`.
+    - Click on the `Build Now`.
 
-        - Copy paste the code from `Jenkins-Pipeline-Code/Jenkinsfile-Frontend `.
+- Create Jenkins Pipeline to deploy the Frontend Code: `Jenkins Dashboard` -> `New Item` -> `Pipeline`   
+        
+    - Name: Three-Tier-Frontend -Application
+    - Copy paste the code from `Jenkins-Pipeline-Code/Jenkinsfile-Frontend `.
+    - Click on the `Build Now`.
 
-        - Click on the `Build Now`.
+## Step 8. Configure ArgoCD
 
-## Step 11: Set up Monitoring for EKS Cluster.
+- If the Source Code Repository is Private
+
+    - `Settings` -> `Repositories` -> `CONNECT REPO USING HTTPS`
+
+        - Type: git
+        - Project: default
+        - Repo URL: `https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git`
+        - Username: aqeeladil
+        - Password: <github-personal-access-token>
+
+    - If your Connection Status is Successful it means repository connected successfully.
+
+- Create a namespace in `Jump Server` using: `kubectl create namespace three-tier`.
+
+- Create argocd applications for the database, backend, frontend and ingress.
+
+    - Database:
+
+        - three-tier-database
+        - default
+        - automatic
+        - self-heal
+        - `https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git`
+        - `Kubernetes-Manifests-file/Database/`
+        - kubernetes.default.svc
+        - three-tier
+
+        ```bash
+        #Verify 
+        kubectl get all -n three-tier
+
+        # Persistent Volume & Persistent Volume Claim are configured. So, if the pods get deleted then, the data won’t be lost. The Data will be stored on the host machine.
+
+        kubectl get pvc -n three-tier
+        ```
+
+    - Backend: 
+
+        - three-tier-backend
+        - default
+        - automatic
+        - self-heal
+        - `https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git`
+        - `Kubernetes-Manifests-file/Backend/`
+        - kubernetes.default.svc
+        - three-tier
+
+    - Frontend: 
+
+        - three-tier-frontend
+        - default
+        - automatic
+        - self-heal
+        - `https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git`
+        - `Kubernetes-Manifests-file/Frontend/`
+        - kubernetes.default.svc
+        - three-tier
+
+    - Ingress: 
+
+        - three-tier-ingress
+        - default
+        - automatic
+        - self-heal
+        - `https://github.com/aqeeladil/mern-end-to-end-devops-implementation.git`
+        - `Kubernetes-Manifests-file/`
+        - kubernetes.default.svc
+        - three-tier
+
+- Once the Ingress application is deployed. It will create an Application Load Balancer
+
+## Step 9. Load balancer Integrtion with Route53
+
+- `Route53` -> `Hosted Zones` -> `aqeeladil.site` -> `Create record`
+
+    - Record type: A-Routes traffic to an ipv4 and some Aws resources.
+    - Alias
+    - Routes traffic to: Alias to Application and Classic Load Balancer.
+    - US-East (N.Virginia)
+    - <your-alb-load-balancer-id>
+    - Simple Routing
+
+- Verify all the created resource using: 
+
+    ```
+    kubectl get all -n three-tier
+    kubectl get ing -n three-tier
+    ```
+
+- Access the application at `http://aqeeladil.site`
+
+## Step 10. On the `Jump Server`, set up Monitoring for EKS Cluster.
 
 ```bash
+# Install Prometheus 
 helm repo add stable https://charts.helm.sh/stable
-
-# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-# helm install prometheus prometheus-community/prometheus
-# helm repo add grafana https://grafana.github.io/helm-charts
-# helm repo update
-# helm install grafana grafana/grafana
-
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 
-helm install stable prometheus-community/kube-prometheus-stack
+# Install Grafana
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+helm install grafana grafana/grafana
 
+# Verify
+helm repo list
+kubectl get deploy
+
+# Access the Prometheus and Grafana consoles 
 kubectl get svc
-
-# Access the Prometheus and Grafana consoles from outside of the cluster.
-# Change the Service type from ClusterType to LoadBalancer
-
-kubectl edit svc stable-kube-prometheus-sta-prometheus
-
-kubectl edit svc stable-grafana
+kubectl edit svc prometheus-server      # Change the Service type from ClusterType to LoadBalancer
+kubectl edit svc stable-grafana         # Change the Service type from ClusterType to LoadBalancer
 
 # Verify 
-kubectl get svc
-# you will see the LoadBalancers DNS names
-# You can also validate from your console.
+kubectl get svc prometheus-server
+kubectl get svc grafana  
+# you will see the LoadBalancers DNS name under `EXTERNAL-IP` section.
+# You can also validate from aws load balancer console.
 ```
 
 - Access Prometheus Dashboar at `<Prometheus-LB-DNS>:9090`.
@@ -476,58 +498,29 @@ kubectl get svc
 
     - You will see a lot of Targets
 
-- Access Grafana Dashboard at `<Grafana-LB-DNS> (admin/prom-operator).
+- Access Grafana Dashboard at `<Grafana-LB-DNS>.
 
-    - `Data Source` -> `Prometheus`
+    - Retrieve username & password: 
+        ```bash
+        kubectl get secrets
+        kubectl get secret grafana -n default -o jsonpath="{.data.admin-user}" | base64 --decode
+        kubectl get secret grafana -n default -o jsonpath="{.data.admin-password}" | base64 --decode
+        ```
+
+    - `Data Sources` -> `Add data source` -> `Prometheus`
 
         - In the Connection, paste your <Prometheus-LB-DNS>:9090.
-
         - If the URL is correct, then you will see a green notification/
 
 - On Grafana, create a dashboard to visualize Kubernetes Cluster Logs.
 
     - `Dashboard` -> `New` -> `Import` -> 
 
-        - Provide 6417 ID and click on Load
-
+        - Provide `6417` ID and click on Load
         - `6417` is a unique ID from Grafana which is used to Monitor and visualize Kubernetes Data
-
-    - Select the data source that you have created earlier and click on Import.
+        - Select the data source that you have created earlier and click on Import.
 
     - You can view your Kubernetes Cluster Data.
-
-## Step 11: Deploy Three-Tier Application using ArgoCD.
-
-1. Configure the Private Repository in ArgoCD.
-
-    - `Settings` -> `Repositories` -> `CONNECT REPO USING HTTPS` -> 
-
-    - Provide the repository name where your Manifests files are present.
-
-    - Provide the username and GitHub Personal Access token and click on CONNECT.
-
-    - If your Connection Status is Successful it means repository connected successfully.
-
-2. Create argocd applications for the database, backend, frontend and ingress.
-
-    - Once your Ingress application is deployed. It will create an Application Load Balancer
-
-3. Now, Copy the ALB-DNS and go to your Domain Provider 
-
-    - Go to DNS and add a CNAME type with hostname backend then add your ALB in the Answer and click on Save.
-
-4. Now, you can see your Grafana Dashboard to view the EKS data such as pods, namespace, deployments, etc.
-
-5. We have configured the Persistent Volume & Persistent Volume Claim. So, if the pods get deleted then, the data won’t be lost. The Data will be stored on the host machine.
-
-![Index 1 Banner](assets/index-1.jpg)
-
-![Index 2 Banner](assets/index-2.jpg)
-
-
-
-
-
 
 
 
